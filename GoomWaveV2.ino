@@ -20,6 +20,7 @@ ShineWave project: https://github.com/Serisium/Shinewave
 This helpful video on Switch Case State Machines: https://youtu.be/v8KXa5uRavg?list=PLH_Belnbfmpi3nsjzXG1jGfH4rfW11P48
  */
 #include <FastLED.h>    //Publicly available library for sending data to LEDs
+#include "Animation.h"
 
 //Declarations for reading the GameCube Data                        
 #define dataStringLength              89                                                                      //25 for GC data + 64 for controller data
@@ -37,6 +38,12 @@ const uint8_t controllerDataPin = 7;                                            
 #define Green     0, 0, 255
 #define White     255, 255, 255
 #define Purple    255, 255, 0
+
+typedef struct s_recordedInput {
+  bool isAngle;
+  uint8_t angle;
+} t_recordedInput;
+
 CRGB leds[NUM_LEDS]; // Define the array of leds
 uint8_t gHue = 0; //number that dictates how far along the idle animation we are
 
@@ -44,17 +51,41 @@ uint8_t gHue = 0; //number that dictates how far along the idle animation we are
 bool started = false;
 uint8_t originPollNumber = 0;
 
+enum e_button {
+  A       = 0,
+  B       = 1,
+  X       = 2,
+  Y       = 3,
+  DDOWN   = 4,
+  HARDR   = 5,
+  HARDL   = 6,
+  HARD2   = 7,
+  Z       = 8,
+  START   = 9,
+  RUMBLE  = 10
+};
+
+enum e_angle {
+  XA  = 0,
+  YA  = 1,
+  XC  = 2,
+  YC  = 3,
+  LANGLE   = 4,
+  RANGLE   = 5
+};
+
+typedef enum e_direction {
+  UP      = 0,
+  DOWN    = 1,
+  SIDE    = 2,
+  NEUTRAL = 3
+};
+
+//Variable containing the direction of the attack 
+e_direction attackDirection; 
+
 //Variable declarations for buttons and mode states (b = true/1 means b is pressed, b = false/0 means b is not pressed, etc.)
-bool a; 
-bool b;
-bool x;
-bool y;
-bool dDown;
-bool r; //r hard press
-bool l; //l hard press
-bool z;
-bool s; //start button
-bool rumble; //whether we're getting the signal from the GameCube to rumble
+bool currentPress[11];
 
 //declarations for the analog parts of the data
 uint8_t xA=0;   //Analog stick x axis
@@ -83,23 +114,14 @@ float hA = 0; //hA = hypotenuse of analog stick
 float hC = 0;
 float maxhAnew = 0; //Hypotenuse max'd to 1.0
 float maxhCnew = 0;
-float xAnew = 0; //variable from 0-1.0 for calculating LED states, x axis Analog stick
-float yAnew = 0; //y axis Analog stick
-float xCnew = 0;  //x axis C stick
-float yCnew = 0; //y axis C stick
-float Lnew = 0; //L analog
-float Rnew = 0; //R analog
+
+float fixedXA = 0;
+float fixedYA = 0;
+
+float currentAnalog[6];
 
 //Variables for the previous read of button presses
-bool dDownPrev; //previous state of dpad down so that you can switch modes
-bool aPrev; //Previous state of buttons for state machine animations
-bool bPrev;
-bool xPrev; 
-bool yPrev;
-bool lPrev;
-bool rPrev;
-bool zPrev;
-bool sPrev;
+bool oldPress[11];
 
 //Mode variables
 byte modeCount = 0; //To switch between modes
@@ -188,6 +210,9 @@ void setup()
 
   //Uncomment this next line for APA102s (Dotstars). Note: Color values are RBG not GBR like NeoPixels, so colors will be different
   FastLED.addLeds<APA102, RGB>(leds, NUM_LEDS); //what type of LEDs to use
+
+  Serial.println("Loading animations");
+  initializeAnimations(); // Loading the different animations for each input (RESPONSIVE + MODE)
   
 
   //Uncomment this next line for WS2812s (NeoPixels). Note: Color values are GBR not RBG like Dotstars, so colors will be different
@@ -220,14 +245,14 @@ void sendRawData() //Function for sending messages to LEDs after reading the dat
     EVERY_N_MILLISECONDS( 5 ) { gHue++; } //function to increment every once in a while for the idle animation
 
     //To go to different modes
-    if(!dDownPrev && dDown)  //if it was a 0 and then is a 1 (it was pressed down) then increment to the next mode
+    if(!oldPress[DDOWN] && currentPress[DDOWN])  //if it was a 0 and then is a 1 (it was pressed down) then increment to the next mode
     {
       modeCount = modeCount + 1;
       mode = modeCount %5; //5 modes
 //      Serial.print("the mode is: ");
 //      Serial.println(mode); //Optional Serial Prints
     }
-    dDownPrev = dDown;
+    oldPress[DDOWN] = currentPress[DDOWN];
     //end setup before modes
     
     /////////////////////////////////////////////////modes
@@ -235,33 +260,33 @@ void sendRawData() //Function for sending messages to LEDs after reading the dat
       if (mode == 0) //Mode 0: Reactive craziness on every input
       {
         lightUpButtons(); //Attach the state machines for lighting up the buttons
-        if (x==0&&y==0&&a==0&&b==0&&l==0&&r==0&&z==0&&s==0) //if no button is pressed
-        {
-          if (xCnew>=.2875||yCnew>=.2875) //if the C stick is being pressed
-          {
-            for(int i=0;i<5;i++)
-            {
-              //The order of xCnew and yCnew as well as the *255 can be changed to change the colors
-              leds[i] = CRGB(yCnew*255,xCnew*255,xCnew*255); //light up based on C stick inputs
-            }
-          }
-          else //the c stick is not being pressed
-          {
-            for(int i=0;i<5;i++)
-            { 
-              //The order of xAnew and yAnew as well as the *255 can be changed to change the colors
-              leds[i] = CRGB(xAnew*255,yAnew*255,xAnew*255); //light up based on analog stick inputs
-            }
-          }
-          if(xCnew<.2875&&yCnew<.2875&&xAnew<.2875&&yAnew<.2875) //if none of the sticks are pressed
-          {
-            for(int i=0;i<5;i++)
-            { 
-              //The order of Lnew and Rnew as well as the *255 can be changed to change the colors
-              leds[i] = CRGB(Lnew*255,Rnew*255,Rnew*255); //light up based on the analog triggers
-            }
-          }
-        }
+//        if (currentPress[X]==0&&currentPress[Y]==0&&currentPress[A]==0&&currentPress[B]==0&&currentPress[L]==0&&currentPress[R]==0&&currentPress[Z]==0&&currentPress[START]==0) //if no button is pressed
+//        {
+//          if (currentAnalog[XC]>=.2875||currentAnalog[YC]>=.2875) //if the C stick is being pressed
+//          {
+//            for(int i=0;i<5;i++)
+//            {
+//              //The order of currentAnalog[XC] and currentAnalog[YC] as well as the *255 can be changed to change the colors
+//              leds[i] = CRGB(currentAnalog[YC]*255,currentAnalog[XC]*255,currentAnalog[XC]*255); //light up based on C stick inputs
+//            }
+//          }
+//          else //the c stick is not being pressed
+//          {
+//            for(int i=0;i<5;i++)
+//            { 
+//              //The order of currentAnalog[XA] and currentAnalog[YA] as well as the *255 can be changed to change the colors
+//              leds[i] = CRGB(currentAnalog[XA]*255,currentAnalog[YA]*255,currentAnalog[XA]*255); //light up based on analog stick inputs
+//            }
+//          }
+//          if(currentAnalog[XC]<.2875&&currentAnalog[YC]<.2875&&currentAnalog[XA]<.2875&&currentAnalog[YA]<.2875) //if none of the sticks are pressed
+//          {
+//            for(int i=0;i<5;i++)
+//            { 
+//              //The order of currentAnalog[L] and currentAnalog[R] as well as the *255 can be changed to change the colors
+//              leds[i] = CRGB(currentAnalog[L]*255,currentAnalog[R]*255,currentAnalog[R]*255); //light up based on the analog triggers
+//            }
+//          }
+//        }
 
         FastLED.show();
         
@@ -273,12 +298,12 @@ void sendRawData() //Function for sending messages to LEDs after reading the dat
       }
       else if (mode == 2) //mode 2, LED notches
       {
-        if (yAnew>.9&&xAnew>.3&&xAnew<.35||xAnew>.9&&yAnew>.3&&yAnew<.35) //if the values are within a certain range
+        if (currentAnalog[YA]>.9&&currentAnalog[XA]>.3&&currentAnalog[XA]<.35||currentAnalog[XA]>.9&&currentAnalog[YA]>.3&&currentAnalog[YA]<.35) //if the values are within a certain range
         {
           for(int i=0;i<5;i++)
           { 
-            //The order of xAnew and yAnew as well as the *255 can be changed to change the colors
-            leds[i] = CRGB(yAnew*255,xAnew*255,xAnew*255); //light up based on analog stick inputs
+            //The order of currentAnalog[XA] and currentAnalog[YA] as well as the *255 can be changed to change the colors
+            leds[i] = CRGB(currentAnalog[YA]*255,currentAnalog[XA]*255,currentAnalog[XA]*255); //light up based on analog stick inputs
           }
           FastLED.show();
         }
@@ -293,7 +318,7 @@ void sendRawData() //Function for sending messages to LEDs after reading the dat
       }
       else if (mode == 3) //mode 3, Flash white for rumble
       {
-        if (rumble==1)
+        if (currentPress[RUMBLE]==1)
         {
           for(int i=0;i<5;i++)
           {   
@@ -346,16 +371,16 @@ void interpretData() {
     }
 
     //setup before modes
-    a = rawData[32]; //the a button is the 32nd bit in the Gamecube+controller data string
-    b = rawData[31];
-    x = rawData[30];
-    y = rawData[29];
-    l = rawData[34];
-    r = rawData[35];
-    z = rawData[36];
-    s = rawData[28];
-    rumble = rawData[23]; 
-    dDown = rawData[38];
+    currentPress[A] = rawData[32];
+    currentPress[B] = rawData[31];
+    currentPress[X] = rawData[30];
+    currentPress[Y] = rawData[29];
+    currentPress[L] = rawData[34];
+    currentPress[R] = rawData[35];
+    currentPress[Z] = rawData[36];
+    currentPress[START] = rawData[28];
+    currentPress[RUMBLE] = rawData[23];
+    currentPress[DDOWN] = rawData[38];
 
     /////////////////////////////////Analog data calculations start
     xA = 0; //Inital x Axis 8 bit value
@@ -395,352 +420,38 @@ void interpretData() {
     hC = sqrt(yCresult*yCresult+xCresult*xCresult); //hC = hypotenuse of C stick
     maxhAnew=max(1.0,hA); //round the hypotenuse to 1.0 if it's over 1.0
     maxhCnew=max(1.0,hC);
-    xAnew=abs(xAresult/maxhAnew); //take the absolute value so you don't give a negative number to the LEDs
-    yAnew=abs(yAresult/maxhAnew);
-    xCnew=abs(xCresult/maxhCnew);
-    yCnew=abs(yCresult/maxhCnew);
+    fixedXA = xAresult/maxhAnew;
+    fixedYA = yAresult/maxhAnew;
+    if (fixedXA >= -.6 && fixedXA <= .6)
+    {
+      if (fixedYA > .3)
+        attackDirection = UP;
+      else if (fixedYA < .3)
+        attackDirection = DOWN;
+    }
+    else if (abs(fixedXA) > .6)
+      attackDirection = SIDE;
+    else
+      attackDirection = NEUTRAL;
+    currentAnalog[XA]=abs(xAresult/maxhAnew); //take the absolute value so you don't give a negative number to the LEDs
+    currentAnalog[YA]=abs(yAresult/maxhAnew);
+    currentAnalog[XC]=abs(xCresult/maxhCnew);
+    currentAnalog[YC]=abs(yCresult/maxhCnew);
     if (Lresult<0){Lresult=0.0;} //don't return a negative number for the leds
     if (Rresult<0){Rresult=0.0;}
-    Lnew=abs(Lresult);
-    Rnew=abs(Rresult);
+    currentAnalog[L]=abs(Lresult);
+    currentAnalog[R]=abs(Rresult);
 
     //create melee deadzones
-    if (xAnew<.2875){xAnew=0.0;} 
-    if (yAnew<.2875){yAnew=0.0;}
-    if (xCnew<.2875){xCnew=0.0;}
-    if (yCnew<.2875){yCnew=0.0;}
-    if (Lnew<.3){Lnew=0.0;}
-    if (Rnew<.3){Rnew=0.0;}
-    if (Lnew>1.0){Lnew=1.0;}
-    if (Rnew>1.0){Rnew=1.0;}
+    if (currentAnalog[XA]<.2875){currentAnalog[XA]=0.0;} 
+    if (currentAnalog[YA]<.2875){currentAnalog[YA]=0.0;}
+    if (currentAnalog[XC]<.2875){currentAnalog[XC]=0.0;}
+    if (currentAnalog[YC]<.2875){currentAnalog[YC]=0.0;}
+    if (currentAnalog[L]<.3){currentAnalog[L]=0.0;}
+    if (currentAnalog[R]<.3){currentAnalog[R]=0.0;}
+    if (currentAnalog[L]>1.0){currentAnalog[L]=1.0;}
+    if (currentAnalog[R]>1.0){currentAnalog[R]=1.0;}
     /////////////////////////////////////////Analog data calculations end
-}
-
-void bStateMachine() { //State machine to do a small flash and then hold a color every time b is pressed. All other button press state machines follow the exact same logic.
-  switch(state_b) //Switch statement acts as a state machine
-  {
-  case 0: //RESET. Just go to mode 1.
-      state_b = 1;
-    break;
-  case 1: //WAIT
-      //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
-    break;
-  case 2: //TURN ON
-      for(int i=0;i<5;i++) //Set the LEDs color to bFlashColor
-      {   
-        leds[i] = CRGB(bFlashColor);
-      }
-      FastLED.show();
-      time0b = millis(); //start the timer on the flash
-      state_b = 3; //go to the next state
-    break;
-    case 3: //STAY ON
-      //Wait for time to elapse, then proceed to HOLD COLOR
-      time1b = millis();
-      if (time1b - time0b > buttonDelay) {state_b = 4;}  //if enough time has elapsed (flash is done), turn the hold color on
-    break;
-    case 4: //HOLD COLOR: Turn LEDs to bHoldColor
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(bHoldColor);
-      }
-      FastLED.show();
-      state_b = 5; //next state
-    break;
-    case 5: //blue
-      if (b==0) {state_b = 0;} //if B goes low again, reset to the beginning.
-    break;    
-  }
-}
-void aStateMachine() { //State machine to do a small flash and then hold a color every time a is pressed.
-switch(state_a)
-  {
-  case 0: //RESET  
-      state_a = 1;
-    break;
-  case 1: //WAIT
-      //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
-    break;
-  case 2: //TURN white red 
-      for(int i=0;i<5;i++) //Set the LEDs color to aFlashColor
-      {   
-        leds[i] = CRGB(aFlashColor);
-      }
-      FastLED.show();
-      time0b = millis(); //update the timer for the flash part
-      state_a = 3; //go to the next state
-    break;
-    case 3: //ON
-      //Wait for time to elapse, then proceed to HOLD COLOR
-      time1a = millis();
-      if (time1a - time0a > buttonDelay) {state_a = 4;}  
-    break;
-    case 4: //HOLD COLOR: Turn LEDs to aHoldColor
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(aHoldColor);
-      }
-      FastLED.show();
-      state_a = 5; //next state
-    break;
-    case 5: //White  
-      if (a==0) {state_a = 0;} //if a goes low again, reset to the beginning.
-    break;    
-  }
-}
-void xStateMachine() { //State machine to do a small flash and then hold a color every time x is pressed.
-switch(state_x)
-  {
-  case 0: //RESET 
-      state_x = 1;
-    break;
-  case 1: //WAIT
-      //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
-    break;
-  case 2: //TURN Flash ON
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(xFlashColor);
-      }
-      FastLED.show();
-      time0x = millis();
-      state_x = 3;
-    break;
-    case 3: //ON
-      //Wait for time to elapse, then proceed to HOLD COLOR
-      time1x = millis();
-      if (time1x - time0x > buttonDelay) {state_x = 4;}  
-    break;
-    case 4: //HOLD COLOR
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(xHoldColor);
-      }
-      FastLED.show();
-      state_x = 5; 
-    break;
-    case 5:   
-      if (x==0) {state_x = 0;} 
-    break;    
-  }
-}
-void yStateMachine() { //State machine to do a small flash and then hold a color every time y is pressed.
-  switch(state_y) //Switch statement acts as a state machine
-  {
-  case 0: //RESET  
-      state_y = 1;
-    break;
-  case 1: //WAIT
-      //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
-    break;
-  case 2: //TURN ON
-      for(int i=0;i<5;i++) //Set the LEDs color to bFlashColor
-      {   
-        leds[i] = CRGB(yFlashColor);
-      }
-      FastLED.show();
-      time0y = millis(); //start the timer on the flash
-      state_y = 3; //go to the next state
-    break;
-    case 3: //STAY ON
-      //Wait for time to elapse, then proceed to HOLD COLOR
-      time1y = millis();
-      if (time1y - time0y > buttonDelay) {state_y = 4;}  //if enough time has elapsed (flash is done), turn the hold color on
-    break;
-    case 4: //HOLD COLOR: Turn LEDs to bHoldColor
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(yHoldColor);
-      }
-      FastLED.show();
-      state_y = 5; //next state
-    break;
-    case 5: //blue
-      if (y==0) {state_y = 0;} //if y goes low again, reset to the beginning.
-    break;    
-  }
-}
-void lStateMachine() { //State machine to do a small flash and then hold a color every time l is pressed.
-switch(state_l)
-  {
-  case 0: //RESET 
-      state_l = 1;
-    break;
-  case 1: //WAIT
-      //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
-    break;
-  case 2: //TURN ON
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(lFlashColor);
-      }
-      FastLED.show();
-      time0l = millis();
-      state_l = 3;
-    break;
-    case 3: //ON
-      //Wait for time to elapse, then proceed to HOLD COLOR
-      time1l = millis();
-      if (time1l - time0l > buttonDelay) {state_l = 4;}  
-    break;
-    case 4: //HOLD COLOR
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(lHoldColor);
-      }
-      FastLED.show();
-      state_l = 5; 
-    break;
-    case 5: //White  
-      if (l==0) {state_l = 0;} 
-    break;    
-  }
-}
-void rStateMachine() { //State machine to do a small flash and then hold a color every time r is pressed.
-switch(state_r)
-  {
-  case 0: //RESET 
-      state_r = 1;
-    break;
-  case 1: //WAIT
-      //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
-    break;
-  case 2: //TURN ON
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(rFlashColor);
-      }
-      FastLED.show();
-      time0r = millis();
-      state_r = 3;
-    break;
-    case 3: //ON
-      //Wait for time to elapse, then proceed to HOLD COLOR
-      time1r = millis();
-      if (time1r - time0r > buttonDelay) {state_r = 4;}  
-    break;
-    case 4: //HOLD COLOR
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(rHoldColor);
-      }
-      FastLED.show();
-      state_r = 5; 
-    break;
-    case 5: //White  
-      if (r==0) {state_r = 0;} 
-    break;    
-  }
-}
-void zStateMachine() { //State machine to do a small flash and then hold a color every time z is pressed.
-switch(state_z)
-  {
-  case 0: //RESET 
-      state_z = 1;
-    break;
-  case 1: //WAIT
-      //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
-    break;
-  case 2: //TURN ON
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(zFlashColor);
-      }
-      FastLED.show();
-      time0z = millis();
-      state_z = 3;
-    break;
-    case 3: //ON
-      //Wait for time to elapse, then proceed to HOLD COLOR
-      time1z = millis();
-      if (time1z - time0z > buttonDelay) {state_z = 4;}  
-    break;
-    case 4: //HOLD COLOR
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(zHoldColor);
-      }
-      FastLED.show();
-      state_z = 5; 
-    break;
-    case 5: //White  
-      if (z==0) {state_z = 0;} 
-    break;    
-  }
-}
-void sStateMachine() { //State machine to do a small flash and then hold a color every time z is pressed.
-switch(state_s)
-  {
-  case 0: //RESET 
-      state_s = 1;
-    break;
-  case 1: //WAIT
-      //Do nothing.  Only the top level loop can force us out of this state into state 2 "TURN ON"
-    break;
-  case 2: //TURN ON
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(sFlashColor);
-      }
-      FastLED.show();
-      time0s = millis();
-      state_s = 3;
-    break;
-    case 3: //ON
-      //Wait for time to elapse, then proceed to HOLD COLOR
-      time1s = millis();
-      if (time1s - time0s > buttonDelay) {state_s = 4;}  
-    break;
-    case 4: //HOLD COLOR
-      for(int i=0;i<5;i++)
-      {   
-        leds[i] = CRGB(sHoldColor);
-      }
-      FastLED.show();
-      state_s = 5; 
-    break;
-    case 5: //White  
-      if (s==0) {state_s = 0;} 
-    break;    
-  }
-}
-
-void xysStateMachine() { //State machine to reset the origin for the leds when x+y+start is held for a while
-switch(state_xys)
-  {
-  case 0: //WAIT
-  //do nothing unless the condition is met
-  if (x&&y&&s) //if x and y and start are being pressed, go to the next step
-  {
-    state_xys=1;
-  }
-    break;
-  case 1: //Begin timer
-    time0xys = millis(); //timer0 started
-    state_xys = 2;
-    break;
-  case 2: //Running timer
-    time1xys = millis(); //timer1 ticking
-    if (x==0||y==0||s==0) //if you stopped pressing x+y+start
-    {
-      state_xys = 3; //it was a false alarm
-    }
-    if (time1xys-time0xys>resetDelay) //if you exceeded the amount of time we set for a sufficiently long xystart hold
-    {
-      state_xys = 4; //confirmed
-    }
-    break;
-  case 3: //False Alarm
-    time1xys=time0xys; //reset the timer
-    state_xys = 0; //reset to the beginning
-    break;
-  case 4: //Confirmed trying to reset
-    started=false; //act as if the controller was just plugged in, redo the origin poll
-    originPollNumber=0;
-    mode=1; //also go to the idle animation to confirm the reset worked
-    state_xys = 0; //reset the state machine
-    break;    
-  }
 }
 
 void strobeLight() { //State machine to do a strobe light animation indefinitely
@@ -795,30 +506,52 @@ void strobeLight() { //State machine to do a strobe light animation indefinitely
     break;
   }
 }
-void lightUpButtons(){//Declarations for lighting up buttons using state machines 
 
-  bStateMachine(); //attach all the state machines
-  aStateMachine();
-  xStateMachine();
-  yStateMachine();
-  lStateMachine();
-  rStateMachine();
-  zStateMachine();
-  sStateMachine();
-  if(!aPrev && a) {state_a = 2;}  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  aPrev = a; //a update
-  if(!bPrev && b) {state_b = 2;}  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  bPrev = b; //b update
-  if(!xPrev && x) {state_x = 2;}  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  xPrev = x; //x update
-  if(!yPrev && y) {state_y = 2;}  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  yPrev = y; //y update
-  if(!lPrev && l) {state_l = 2;}  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  lPrev = l; //l update
-  if(!rPrev && r) {state_r = 2;}  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  rPrev = r; //r update
-  if(!zPrev && z) {state_z = 2;}  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  zPrev = z; //z update
-  if(!sPrev && s) {state_s = 2;}  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  sPrev = s; //s update
+void initializeAnimations() // This function assigns each animation to the corresponding action
+{
+  animations[ACTION_X].animation = xStateMachine;
+  animations[ACTION_X].triggered = false;
+  animations[ACTION_Y].animation = yStateMachine;
+  animations[ACTION_Y].triggered = false;
+  animations[ACTION_L].animation = lStateMachine;
+  animations[ACTION_L].triggered = false;
+  animations[ACTION_R].animation = rStateMachine;
+  animations[ACTION_R].triggered = false;
+  animations[NEUTRAL_A].animation = aStateMachine;
+  animations[NEUTRAL_A].triggered = false;
+  animations[UPTILT].animation = NULL;
+  animations[UPTILT].triggered = false;
+  animations[DOWNTILT].animation = NULL;
+  animations[DOWNTILT].triggered = false;
+  animations[FTILT].animation = NULL;
+  animations[FTILT].triggered = false;
+  animations[NEUTRAL_B].animation = bStateMachine;
+  animations[NEUTRAL_B].triggered = false;
+  animations[SIDE_B].animation = NULL;
+  animations[SIDE_B].triggered = false;
+  animations[UP_B].animation = NULL;
+  animations[UP_B].triggered = false;
+  animations[DOWN_B].animation = downbStateMachine;
+  animations[DOWN_B].triggered = false;
+  animations[FSMASH].animation = NULL;
+  animations[FSMASH].triggered = false;
+  animations[DSMASH].animation = NULL;
+  animations[DSMASH].triggered = false;
+  animations[USMASH].animation = NULL;
+  animations[USMASH].triggered = false; 
+}
+
+void lightUpButtons(){//Declarations for lighting up buttons using state machines 
+  actionFinder(); // Look at the current input and try to deduce what is the current action
+  for (int i=0; i < TOTAL_ANIMATIONS; i++)
+  {
+    if (animations[i].triggered) // We check if we have a triggered animation. If so, run another cycle of it.
+      animations[i].animation();
+  }
+  if (currentAction != NO_ACTION) // If we are not idle, we trigger the corresponding animation
+  {
+    animations[currentAction].triggered = true;
+    if (animations[currentAction].animation != NULL) // We check if an animation has been defined go a given action
+      animations[currentAction].animation();
+  }
 }
