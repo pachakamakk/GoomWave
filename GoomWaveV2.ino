@@ -213,6 +213,7 @@ void setup()
 
   Serial.println("Loading animations");
   initializeAnimations(); // Loading the different animations for each input (RESPONSIVE + MODE)
+  Serial.println("Done");
   
 
   //Uncomment this next line for WS2812s (NeoPixels). Note: Color values are GBR not RBG like Dotstars, so colors will be different
@@ -422,12 +423,15 @@ void interpretData() {
     maxhCnew=max(1.0,hC);
     fixedXA = xAresult/maxhAnew;
     fixedYA = yAresult/maxhAnew;
+    attackDirection = NEUTRAL;
     if (fixedXA >= -.6 && fixedXA <= .6)
     {
-      if (fixedYA > .3)
+      if (fixedYA >= .3)
         attackDirection = UP;
-      else if (fixedYA < .3)
+      else if (fixedYA <= -.3)
         attackDirection = DOWN;
+      else
+        attackDirection = NEUTRAL;
     }
     else if (abs(fixedXA) > .6)
       attackDirection = SIDE;
@@ -543,15 +547,14 @@ void initializeAnimations() // This function assigns each animation to the corre
 
 void lightUpButtons(){//Declarations for lighting up buttons using state machines 
   actionFinder(); // Look at the current input and try to deduce what is the current action
-  for (int i=0; i < TOTAL_ANIMATIONS; i++)
-  {
-    if (animations[i].triggered) // We check if we have a triggered animation. If so, run another cycle of it.
-      animations[i].animation();
-  }
   if (currentAction != NO_ACTION) // If we are not idle, we trigger the corresponding animation
   {
     animations[currentAction].triggered = true;
-    if (animations[currentAction].animation != NULL) // We check if an animation has been defined go a given action
-      animations[currentAction].animation();
   }
+  for (int i=0; i < TOTAL_ANIMATIONS; i++)
+  {
+    if (animations[i].triggered && animations[currentAction].animation != NULL) // We check if we have a triggered animation. If so, run another cycle of it.
+      animations[i].animation();
+  }
+  savePresses();
 }

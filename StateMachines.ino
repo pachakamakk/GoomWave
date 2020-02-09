@@ -26,8 +26,15 @@ void downbStateMachine() { //State machine to do a small flash and then hold a c
       state_b = 3; //next state
     break;
     case 3: //blue
-      if (currentPress[B]==0) {state_b = 0;} //if B goes low again, reset to the beginning.
-      animations[NEUTRAL_B].triggered = false;
+      if (currentPress[B]==0) {
+        state_b = 0;
+        animations[DOWN_B].triggered = false;
+        for(int i=0;i<5;i++) //Set the LEDs color to bFlashColor
+        {   
+         leds[i] = CRGB(Black);
+         }
+        FastLED.show();
+      } //if B goes low again, reset to the beginning.
     break;    
   }
 }
@@ -36,6 +43,7 @@ void bStateMachine() { //State machine to do a small flash and then hold a color
   switch(state_b) //Switch statement acts as a state machine
   {
   case 0: //TURN ON
+      Serial.print("STATE B 0");
       for(int i=0;i<5;i++) //Set the LEDs color to bFlashColor
       {   
         leds[i] = CRGB(255,255,255);
@@ -46,10 +54,12 @@ void bStateMachine() { //State machine to do a small flash and then hold a color
     break;
     case 1: //STAY ON
       //Wait for time to elapse, then proceed to HOLD COLOR
+      Serial.print("STATE B 1");
       time1b = millis();
       if (time1b - time0b > buttonDelay) {state_b = 2;}  //if enough time has elapsed (flash is done), turn the hold color on
     break;
     case 2: //HOLD COLOR: Turn LEDs to bHoldColor
+      Serial.print("STATE B 2");
       for(int i=0;i<5;i++)
       {   
         leds[i] = CRGB(255,255,255);
@@ -58,8 +68,15 @@ void bStateMachine() { //State machine to do a small flash and then hold a color
       state_b = 3; //next state
     break;
     case 3: //blue
-      if (currentPress[B]==0) {state_b = 0;} //if B goes low again, reset to the beginning.
-      animations[NEUTRAL_B].triggered = false;
+      if (currentPress[B]==0) {
+        state_b = 0;
+        for(int i=0;i<5;i++) //Set the LEDs color to bFlashColor
+        {   
+          leds[i] = CRGB(Black);
+        }
+        FastLED.show();
+        animations[NEUTRAL_B].triggered = false;
+      } //if B goes low again, reset to the beginning.
     break;    
   }
 }
@@ -90,8 +107,15 @@ switch(state_a)
       state_a = 3; //next state
     break;
     case 3: //White  
-      if (currentPress[A]==0) {state_a = 0;} //if a goes low again, reset to the beginning.
-      animations[NEUTRAL_A].triggered = false;
+      if (currentPress[A]==0) {
+        state_a = 0;
+        for(int i=0;i<5;i++) //Set the LEDs color to bFlashColor
+        {   
+          leds[i] = CRGB(Black);
+        }
+        FastLED.show();
+        animations[NEUTRAL_A].triggered = false;
+      } //if B goes low again, reset to the beginning.
     break;    
   }
 }
@@ -122,8 +146,15 @@ switch(state_x)
       state_x = 3; 
     break;
     case 3:
-      if (currentPress[X]==0) {state_x = 0;}
-      animations[ACTION_X].triggered = false; 
+      if (currentPress[X]==0) {
+        state_x = 0;
+        for(int i=0;i<5;i++) //Set the LEDs color to bFlashColor
+        {   
+          leds[i] = CRGB(Black);
+        }
+        FastLED.show();
+        animations[ACTION_X].triggered = false;
+      } //if B goes low again, reset to the beginning.
     break;    
   }
 }

@@ -1,6 +1,7 @@
 
 
 void actionFinder() {
+  currentAction = NO_ACTION;
   if (!oldPress[A] && currentPress[A]) { //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
     if (attackDirection == NEUTRAL)
       currentAction = NEUTRAL_A;
@@ -37,8 +38,6 @@ void actionFinder() {
   if(!oldPress[START] && currentPress[START]) {
     currentAction = ACTION_START;
   }  //if it was a 0 and then is a 1 (it was pressed down) then turn on the state machine
-  Serial.print("Current action: ");
-  Serial.println(currentAction);
 }
 
 void savePresses() {
